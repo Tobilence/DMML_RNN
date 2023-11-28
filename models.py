@@ -143,19 +143,21 @@ class GRU_RNN(nn.Module):
         self.c = nn.Parameter(torch.FloatTensor(output_len, 1))
         init_weights(self)
     
-    def forward(self, input_sequence: list[torch.FloatTensor], horizon=20):
+    def forward(self, input_sequence: list[torch.FloatTensor], horizon=20, device=torch.device("cpu")):
         hidden = torch.zeros((self.hidden_len,1)) # initialize hidden state with all zeros
         outputs = torch.FloatTensor([])
         
         # start on existing data points
         for x in input_sequence:
             x = torch.tensor([[x]], dtype=torch.float32)
-            outputs = torch.hstack((outputs, self._calculate_forward(x, hidden)))
+            output, hidden = self._calculate_forward(x, hidden)
+            outputs = torch.hstack((outputs, output))
 
         # continue sequence
         for _ in range(horizon):
             x = outputs[0][-1].unsqueeze(dim=0).unsqueeze(dim=1)
-            outputs = torch.hstack((outputs, self._calculate_forward(x, hidden)))
+            output, hidden = self._calculate_forward(x, hidden)
+            outputs = torch.hstack((outputs, output))
 
         return outputs.view(-1)[-horizon:]
 
@@ -165,7 +167,8 @@ class GRU_RNN(nn.Module):
 
         h_hat = torch.tanh(torch.matmul(self.Wx, x) + reset_gate * torch.matmul(self.Wh, h) + self.b)
         h = ((1 - update_gate) * h) + (update_gate * h_hat)
-        return torch.matmul(self.V, h) + self.c
+        output = torch.matmul(self.V, h) + self.c
+        return output, h
 
 class GRU_RNN_Torch(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
@@ -179,3 +182,14 @@ class GRU_RNN_Torch(nn.Module):
         out = out[:, -1, :]
         out = self.fc(out)
         return out
+
+def move_to_mac_gpu(model: nn.Module) -> (nn.Module, torch.device):
+    """If exists, move the model to Apple GPU (sort of like cuda, but for apple devices)"""
+    if torch.backends.mps.is_available():
+        mps_device = torch.device("mps")
+        print(type(mps_device))
+        print(f"Moved {model.__class__.__name__} to MPS Device")
+        return model.to(mps_device), mps_device
+    else:
+        print("MPS device not found.")
+        return model, None
