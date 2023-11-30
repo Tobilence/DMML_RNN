@@ -2,15 +2,15 @@ from data_generation import generate_longterm_data
 import numpy as np
 import torch.nn as nn
 import torch
-from typing import List, Callable
+from typing import List, Callable, Tuple
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 from dataclasses import dataclass
 
 @dataclass
 class TrainingStats:
-    train_loss: list[float]
-    val_loss: list[float]
+    train_loss: List[float]
+    val_loss: List[float]
 
     def display_training_stats(self):
         plt.plot(self.train_loss, label="Training Loss")
@@ -42,13 +42,31 @@ def train(
     training_labels: torch.FloatTensor, 
     loss_f: nn.Module,
     optimizer: torch.optim.Optimizer,
-    post_epoch_callbacks: list[Callable] = [],
+    post_epoch_callbacks: List[Callable] = [],
     validation_split_size = 0.10,
     random_seed=42,
     plot_loss=True,
-    horizon=20,
     device=torch.device("cpu")
     ) -> TrainingStats:
+    """Trains the given rnn on the given training data
+    Args:
+        rnn (nn.Module): the model (rnn) that is trained
+        epochs (int): the number of epochs the model is trained for
+        training_data (torch.FloatTensor): the sequencethe model is trainied with
+        training_labels (torch.FloatTensor): the labels (forecast) for each individual sequence
+        loss_f (nn.Module): the loss function the predicition is compared with the  label
+        optimizer (torch.optim.Optimizer): the optimizer that trains the model
+
+        post_epoch_callbacks: (List[Callable[AfterEpochCallbackParams]], optional):
+            A list of functions that are called after a training epoch is done. Defaults to 
+            an empty list.
+        random_seed (boolean): a random seed that is applied when splitting for the validation set
+        plot_loss (boolean): if True, plot the validation/training loss per epoch after training is done
+        devide (torch.device): the device that is being trained on. Defaults to cpu.
+
+    Returns:
+        TrainingStats: a dataclass of statistics about the training
+    """
     
     training_epoch_losses = []
     val_epoch_losses = []
@@ -68,6 +86,7 @@ def train(
         for data_series, label_series in zip(X_train, y_train):
             label_series = torch.tensor(label_series).to(device)
             rnn.zero_grad()
+            horizon = len(label_series)
             outputs = rnn.forward(data_series, horizon=horizon, device=device)
             loss = loss_f(outputs, label_series) 
             loss.backward()
@@ -80,7 +99,7 @@ def train(
             y_hat_vals = []
             val_losses = []
             for val_x, val_y in zip(X_val, y_val):
-                y_hat_val = rnn.forward(val_x, horizon=horizon, device=device)
+                y_hat_val = rnn.forward(val_x, horizon=len(val_y), device=device)
                 val_loss = loss_f(y_hat_val, torch.tensor(val_y).to(device))
                 y_hat_vals.append(y_hat_val)
                 val_losses.append(val_loss.cpu().detach().numpy())
@@ -99,23 +118,35 @@ def train(
     return TrainingStats(training_epoch_losses, val_epoch_losses)
 
 
-def plot_losses(train_stats: TrainingStats):
+def plot_losses(train_stats: TrainingStats) -> None:
+    """Plots the training and validation loss as a line chart
+    train_stats (TrainingStats): a training stats object being returned from train method.
+    """
     plt.plot(train_stats.train_loss, color="blue", label="Training Loss")
     plt.plot(train_stats.val_loss, color="orange", label="Validation Loss")
     plt.legend()
 
 def evaluate(
         model: nn.Module,
-        X_test,
+        X_test: List[List[float]],
         labels,
         loss_fn=nn.MSELoss(),
         visualize_samples=True,
         visualize_start_idx=0,
-        visualize_oneline=False # if visualize_samples is true, decides whether 3 or 9 images are shown (and uses 3)
+        visualize_oneline=False # if visualize_samples is true, decides whether 4 or 9 images are shown (and uses 3)
     ) -> (float, float):
-    """
-    Evaluates the model on the given test set.
-    Returns a tuple of loss statistics: (mean_loss, median_loss)
+    """ Evaluates the model on the given test set.
+    Args:
+        model (nn.Module): 
+        X_test (List[List[float]]): the input sequences to test the model on
+        labels: (List[List[float]]): the true values to score the model on
+        loss_fn: the metric the model should be scored with. Defaults to MSE Loss.
+        visualize_samples (boolean): if True, visualizes some predictions
+        visualize_start_idx (boolean): choose which samples will be visualized. Defaults to 0,
+            meaning it will visualize the first 4 or the first 9 predictions.
+        visualize_oneline (boolean): if True, show 4 images in one row, instead of 9 in 3 rows.
+    Returns:
+        (float, float): a tuple of mean loss and median loss on the test data
     """
     with torch.no_grad():
         y_hats = []
@@ -150,15 +181,44 @@ def evaluate(
                     axs[col_idx][row_idx].plot(range(len(data), len(data)+len(label)), preds, "o", label="Predictions", color="darkorange")
     return np.mean(losses), np.median(losses)
 
-def compare_models(models: list[nn.Module], X_test, y_test):
-    losses = [evaluate(model, X_test, y_test, visualize_samples=False)[0] for model in models]
-    models = [model.name for model in models]
+def compare_models(
+        models: List[Tuple[str, nn.Module]],
+        X_test,
+        y_test,
+        loss_fn=nn.MSELoss(),
+        baseline: float=None,
+        print_losses=True
+    ):
+    """ Compares multiple models.
+    Args:
+        models (List[nn.Module]): 
+        X_test (List[List[float]]): the input sequences to test the models on
+        y_test: (List[List[float]]): the true values to score the models on
+        loss_fn: the metric the models should be scored with. Defaults to MSE Loss.
+        baseline (float): a number that will be added to the plot as a horizontal line
+            to serve as a baseline. Defaults to None
+        print_losses (boolean): if True, prints the losses for each model 
+            in addition to the plot. Defaults to True.
+    Returns:
+        (float, float): a tuple of mean loss and median loss on the test data
+    """
+    results = [(name, evaluate(model, X_test, y_test, visualize_samples=False, loss_fn=loss_fn)[0]) for name, model in models]
 
-    plt.bar(models, losses)
+    if print_losses:
+        print(f"Model Name | {loss_fn.__class__.__name__}")
+        for name, loss in results:
+            print(f"{name}: {loss:.5f}")
+    
+    model_names, model_losses = zip(*results)
+
+    plt.bar(model_names, model_losses, width=0.75, align="center")
+
+    plt.xticks(rotation='vertical')
 
     plt.xlabel('Models')
-    plt.ylabel('Loss')
-    plt.title('Comparison of Model Losses')
-    plt.xticks(rotation=90)
+    plt.ylabel(f'Mean {loss_fn.__class__.__name__}')
 
-    plt.show()
+    if baseline is not None:
+        plt.axhline(y=baseline, color='r', linestyle='--', label='Dummy Baseline')
+        plt.legend(loc="upper right", bbox_to_anchor=(1, 0.95))
+    plt.title('Mean Loss of different models on Test Set')
