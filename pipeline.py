@@ -9,6 +9,12 @@ from dataclasses import dataclass
 
 @dataclass
 class TrainingStats:
+    """ A data class that is returned from the train function and can be used to plot a train loss vs val loss graph
+
+    Attributes:
+       train_loss: a list of avg training loss for each epoch
+       val_loss: a list of avg validation loss for each epoch
+    """
     train_loss: List[float]
     val_loss: List[float]
 
@@ -19,11 +25,20 @@ class TrainingStats:
 
 @dataclass
 class AfterEpochCallbackParams:
+    """ A data class that includes all the attributes passed to an after epoch callback in the train function.
+
+    Attributes:
+        model: the model that is being trained
+        epoch: the epoch that just finished
+        current_train_loss: the average training loss of that epoch
+        current_val_loss: the validation loss of that epoch
+        val_loss_history: a list of all avg validation losses 
+    """
     model: nn.Module
     epoch: int
-    current_train_loss: float
+    current_train_loss: float 
     current_val_loss: float
-    val_loss_history: float # the entire history, including the current val loss
+    val_loss_history: float
 
     def as_csv_string(self, seperation_char=";") -> (str, str):
         """ Writes the parameter fields into a csv style string.
@@ -67,7 +82,7 @@ def train(
     Returns:
         TrainingStats: a dataclass of statistics about the training
     """
-    
+    print(f"Started training {rnn.__class__.__name__}")
     training_epoch_losses = []
     val_epoch_losses = []
 
